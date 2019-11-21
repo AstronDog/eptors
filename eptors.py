@@ -1,6 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
+Created on Thu Nov 21 12:29:17 2019
+Author: Jun Wang
+E-mail: jun.wang.ucas@gmail.com
+
+Main Function:
+    
+"""
+
+"""
 Created on Tue Sep 17 10:47:14 2019
 Author: Jun Wang & Caterina Tiburzi
 E-mail: jun.wang.ucas@gmail.com
@@ -19,27 +28,28 @@ import pandas as pd
 import os, argparse, subprocess
 
 
-def ncy_check(obs):
-    """
-    Throw away the extra IPTA flag('-nch') produced with nancay dataset.
 
-    This will not influence TOAs produced from other telescopes.
-    """
-    # Loading tim file
-    df = pd.read_csv(obs, skiprows=1, header=None,dtype=str, delim_whitespace=True)
-    # Check the format of the time file
-    if df.shape[1] == 23:
-        return
-    elif df.shape[1] == 25:
-        print("Throw away '-nch' flag in nancay tim file")
-        df.drop([21, 22], axis=1, inplace=True)
-        df.to_csv(obs, sep=' ', index=False, header=False)
-        os.system("sed -i '1iFORMAT 1' %s"%(obs))
-    else:
-        print("Error: please check the format of the tim file")
-        exit()
-        
-def trim(obs,eph,num):
+def res_obtain(obs, eph):
+    os.system('''cat %s | awk '{if ($1 != "C" && $1 != "MODE") print $0}' > %s_tmp'''%(obs,obs))
+
+    #count = len(open(filepath,'rU').readlines())
+    with open(obs,'r') as f:
+        f.seek(0)
+        n_toa1 = 0
+        for line in f:
+            n_toa1 += 1
+    
+    os.environ['var']=str(n_toa1)    
+
+    os.system("tempo2 -output general2 -f %s %s_tmp -npsr 1 -nobs $n_toa1 -s \
+              \"tadan {freq} {post} {err}e-6\n\" | grep 'tadan'| awk \'{print $2,$3,$4}\' \
+              > tmp.dat"%(eph,obs))
+    freq, post, err = np.genfromtxt("./tmp.dat")[:,0], np.genfromtxt("./tmp.dat")[:,1], np.genfromtxt("./tmp.dat")[:,2]
+    freq = freq.reshape(-1,1)
+    return freq, post, err
+
+
+def trim(obs,eph):
     """
     Basing on Caterina's code, this function is mainly remove outliers 
     with Median Absolute Deviation(MAD) method.
@@ -48,14 +58,7 @@ def trim(obs,eph,num):
     """
 
     # Obtain the frequency, post-fit residuals and Uncertainties
-    os.system('''cat %s | awk '{if ($1 != "C" && $1 != "MODE") print $0}' > %s_tmp'''%(obs,obs))
-
-    os.system("tempo2 -output general2 -f %s %s_tmp -npsr 1 -nobs 60000 -s \
-              \"tadan {freq} {post} {err}e-6\n\" | grep 'tadan'| awk \'{print $2,$3,$4}\' \
-              > tmp.dat"%(eph,obs))
-
-    freq, post, err = np.genfromtxt("./tmp.dat")[:,0], np.genfromtxt("./tmp.dat")[:,1], np.genfromtxt("./tmp.dat")[:,2]
-    freq = freq.reshape(-1,1)
+    freq, post, err = res_obtain(obs, eph)
 
     #print("Now fitting a parabola to the residuals with Huber regressor")       
     #constructing a linear function fitted basing on the Huber regression and applying it
@@ -70,8 +73,8 @@ def trim(obs,eph,num):
 
     median = np.median(residuals)
     MAD = robust.mad(residuals)
-    in_mask = (residuals > median - num*MAD) & (residuals < median + num*MAD)
-    out_mask = (residuals <= median - num*MAD) | (residuals >= median + num*MAD)
+    in_mask = (residuals > median - 3*MAD) & (residuals < median + 3*MAD)
+    out_mask = (residuals <= median - 3*MAD) | (residuals >= median + 3*MAD)
 
     
     #Get the remaining residuals after triming code
@@ -102,30 +105,28 @@ def trim(obs,eph,num):
     plt.show()
 
     #print("Now getting the ToAs newly and putting them in a dataframe")
-    df = pd.read_csv("%s_tmp"%(obs), skiprows=1, dtype=str, header=None, delim_whitespace=True, 
-                     names=["psr_name", "freq", "toa", "err", "site", "key1", "frontend", "key2", 
-                            "backend", "key3", "unknown", "key4", "bandwidth", "key5", "length", 
-                            "key6", "template", "key7", "gof", "key8", "nbin", "key9", "nch"])
-
+    df = pd.read_csv("%s_tmp"%(obs), skiprows=1, dtype=str, header=None, delim_whitespace=True)
 
     #print("Now applying the boolean mask")
     df['inliers'] = in_mask
-    df1 = df[df.inliers != False]
-    del df1['inliers']
+    df = df[df.inliers != False]
+    del df['inliers']
 
   
     #print("Now dumping them to file")
     #Output the new tim file after MAD filtered
-    df1.to_csv("%s_trimtim"%(obs), sep=' ', header=False, index=False)
+    df.to_csv("%s_trimtim"%(obs), sep=' ', header=False, index=False)
     os.system("sed -i '1iFORMAT 1' %s_trimtim"%(obs))
     #Remove mediators
     os.system("rm tmp.dat")
     os.system("rm %s_tmp"%(obs))
+    
+#    return post_to, err_to
 
 
 
 
-def gauss_fit(obs, eph, num):
+def gauss_fit(obs, eph):
     """
     Fitting the Normalized Residuals(Residuals divide by TOA uncertainty) with 
     Gaussian distribution and remove the residuals which are 3*\sigma away 
@@ -135,14 +136,7 @@ def gauss_fit(obs, eph, num):
     obs = obs + '_trimtim'
     
     # Obtain the frequency, post-fit residuals and Uncertainties    
-    os.system('''cat %s | awk '{if ($1 != "C" && $1 != "MODE") print $0}' > %s_tmp'''%(obs,obs))
-    os.system("tempo2 -output general2 -f %s %s_tmp -npsr 1 -nobs 50000 -s \
-              \"tadan {freq} {post} {err}e-6\n\" | grep 'tadan'| awk \'{print $2,$3,$4}\' > tmp.dat"%(eph,obs))
-
-
-    #print("Now fitting a parabola to the residuals with Huber regressor")
-    freq, post, err = np.genfromtxt("./tmp.dat")[:,0], np.genfromtxt("./tmp.dat")[:,1], np.genfromtxt("./tmp.dat")[:,2]
-    freq = freq.reshape(-1,1)
+    freq, post, err = res_obtain(obs, eph)
     
     #Calculate the normalized residuals, which means residuals divided by ToA uncertainties    
     rvu = post/err
@@ -155,7 +149,7 @@ def gauss_fit(obs, eph, num):
     def f(x, b, c, d):
         return  b * np.exp(-(x - c)**2.0/(2 * d**2))
 
-    x = [0.5 * (data[1][i] + data[1][i+1]) for i in xrange(len(data[1])-1)]
+    x = [0.5 * (data[1][i] + data[1][i+1]) for i in np.arange(len(data[1])-1)]
     y = data[0]
 
 
@@ -168,17 +162,17 @@ def gauss_fit(obs, eph, num):
     y_fit = f(x_fit, *popt)
     plt.plot(x_fit, y_fit, lw=3, color="r")
     plt.annotate(r'cut-off point',
-             xy=(popt[1] + 3 * abs(popt[2]), 0), xycoords='data',
+             xy=(popt[1] + 4 * abs(popt[2]), 0), xycoords='data',
              xytext=(-20, +30), textcoords='offset points', fontsize=12,
              arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
     plt.annotate(r'cut-off point',
-             xy=(popt[1] - 3 * abs(popt[2]), 0), xycoords='data',
+             xy=(popt[1] - 4 * abs(popt[2]), 0), xycoords='data',
              xytext=(-40, +30), textcoords='offset points', fontsize=12,
              arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"))
     plt.show()
 
-    in_mask =  (rvu > popt[1] - 3 * abs(popt[2])) & (rvu < popt[1] + 3 * abs(popt[2]))
-    out_mask =  (rvu <= popt[1] - 3 * abs(popt[2])) | (rvu >= popt[1] + 3 * abs(popt[2]))
+    in_mask =  (rvu > popt[1] - 4 * abs(popt[2])) & (rvu < popt[1] + 3 * abs(popt[2]))
+    out_mask =  (rvu <= popt[1] - 4 * abs(popt[2])) | (rvu >= popt[1] + 3 * abs(popt[2]))
     
     
     #Get the outliers marked by Gaussian function, and use it for show_effect function as well
@@ -189,9 +183,9 @@ def gauss_fit(obs, eph, num):
     err_le = err[in_mask]
     
     
-    #Inlier resiudals, used for show_effect function    
+    #Inlier resiudals, used for show_effect function
     global post_go
-    global err_go
+    global err_go   
     post_go = post[out_mask]
     err_go = err[out_mask]
     
@@ -204,9 +198,7 @@ def gauss_fit(obs, eph, num):
     plt.show()
 
 
-    df = pd.read_csv("%s_tmp"%(obs), skiprows=1, dtype=str, header=None, delim_whitespace=True, names=["name",
-                     "freq", "toa", "err", "site", "key1", "frontend", "key2", "backend", "key3", "unknown", "key4", 
-                     "bandwidth", "key5", "length", "key6", "template", "key7", "gof", "key8", "nbin", "key9", "snr"])
+    df = pd.read_csv("%s_tmp"%(obs), skiprows=1, dtype=str, header=None, delim_whitespace=True)
 
     
     #print("Now applying the boolean mask")    
@@ -222,16 +214,29 @@ def gauss_fit(obs, eph, num):
     
     #Remove mediators    
     os.system("rm %s_tmp"%(obs))
-
- 
     
-def showeffect(): 
+#    return post_le, err_le, post_go, err_go
+ 
+def show_residual(obs, eph):
+    with open(obs,'r') as f:
+        f.seek(0)
+        n_toa2 = 0
+        for line in f:
+            n_toa2 += 1
+    
+    os.environ['var']=str(n_toa2)
+    
+    subprocess.call('tempo2 -gr plk -f %s %s -npsr 1 -nobs $n_toa2 -showchisq'%(eph, obs), shell=True)
+    
+def showeffect(obs, eph): 
     """
     Plot the final result of the total outlier rejection scheme
     Reserved TOAs are plot in blue.
     ToAs eliminate with MAD scheme are in red.
     ToAs eliminate with Gaussian distribution fit scheme are in red.
     """
+    
+    
     x_le = np.arange(0, len(post_le), 1 )
     x_to = np.arange(len(post_le),  len(post_le) + len(post_to), 1)
     x_go = np.arange(len(post_le) + len(post_to), len(post_le) + len(post_go) + len(post_to), 1)
@@ -267,14 +272,16 @@ def main(args):
     eph = args.ephemeris[0]
     #num = args.num[0]
 
-    ncy_check(obs)
-    subprocess.call('tempo2 -gr plk -f %s %s -npsr 1 -nobs 60000 -showchisq'%(eph, obs), shell=True)
-    trim(obs,eph,3)
-    #subprocess.call('tempo2 -gr plk -f %s %s_trimtim -npsr 1 -nobs 60000 -showchisq'%(eph, obs), shell=True)
-    gauss_fit(obs, eph, 3)
-    subprocess.call('tempo2 -gr plk -f %s %s_trimtim_gauss -npsr 1 -nobs 60000 -showchisq'%(eph, obs), shell=True)    
-    showeffect()
+
+    show_residual(obs, eph)
+    trim(obs,eph)
+    gauss_fit(obs, eph)
+    show_residual(obs + '_trimtim_gauss', eph)   
+    showeffect(obs, eph)
 
 if __name__=="__main__":
     args = parse_arguments()
     main(args)
+
+
+
