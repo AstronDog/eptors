@@ -14,15 +14,6 @@ EPTA Pulsar Timing Outlier Rejection Scheme(eptors.py), is a python Script for e
 * [sklearn](https://scikit-learn.org)
 
 ## Usage ##
-
-Before running this code, please creating the tim file with command like:
-
-```
-pat -TP(Or FT) -C snr -f  "tempo2 IPTA" -A FDM -s TEMPLATE OBSERVATION > OBSERVATION.tim
-```
-and flag the parameters your want to fit within tempo2 in your par file.
-
-
 To use this code, simply type
 
 ```
