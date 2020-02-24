@@ -2,6 +2,11 @@
 
 EPTA Pulsar Timing Outlier Rejection Scheme(eptors.py), is a python Script for eliminating incorrect and biased TOAs.
 
+
+* VERSION 0.1   :  December 04, 2019
+* VERSION 1.0   :  February 23, 2020
+
+
 ## Requirements ##
 
 * Python 2.7
